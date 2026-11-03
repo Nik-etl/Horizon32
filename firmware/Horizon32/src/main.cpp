@@ -3,6 +3,16 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
+/*
+TODO 
+
+- External pull ups
+- Configure clocks I2C and sample rates
+- buffer handling in function or page buffer drawing loop? 
+- Graphics
+- RTOS task planning 
+- FreeRTOS integration
+*/
 Adafruit_MPU6050 mpu;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(/* rotation=*/U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -13,46 +23,52 @@ constexpr uint8_t SCL_PIN = 9; //yellow
 // constexpr uint8_t MPU_address = 0x68;
 // constexpr uint8_t OLED_address = 0x3c;
 
-void draw(int a )
+void draw(sensors_event_t a,sensors_event_t g)
 {
-   switch(a)
-  {
-    case 0:
+      //accelerometer
       u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_HelvetiPixelOutline_tr);
-      for (int y = 0; y < 64; y += 16)        // 4 rows
-      {
-        for (int x = 0; x < 12; x+=3)         // 4 columns
-        {
-          u8g2.drawStr(x * 8, y, "Hi");
-        }
-      }
+      u8g2.setFont(u8g2_font_jinxedwizards_tr);
+      u8g2.drawStr(5, 0, "X:");  
+      u8g2.setCursor(20, 0);
+      u8g2.print(a.acceleration.x);
+      u8g2.drawStr(5, 20, "Y:");  
+      u8g2.setCursor(20, 20);
+      u8g2.print(a.acceleration.y);
+      u8g2.drawStr(5, 40, "Z:");  
+      u8g2.setCursor(20, 40);
+      u8g2.print(a.acceleration.z);
+
+      //gyro
+      u8g2.setFont(u8g2_font_jinxedwizards_tr);
+      u8g2.drawStr(60, 0, "X:");  
+      u8g2.setCursor(80, 0);
+      u8g2.print(g.gyro.x);
+      u8g2.drawStr(60, 20, "Y:");  
+      u8g2.setCursor(80, 20);
+      u8g2.print(g.gyro.y);
+      u8g2.drawStr(60, 40, "Z:");  
+      u8g2.setCursor(80, 40);
+      u8g2.print(g.gyro.z);
       u8g2.sendBuffer();
-      break;
-     case 1: 
-    //  u8g2.setFont(u8g2_font_tenstamps_mr);
-    //  u8g2.drawStr(0,0, "Hi");  
-     u8g2.setFont(u8g2_font_jinxedwizards_tr);
-     u8g2.drawStr(56, 16, "Hi");  
-    //  u8g2.setFont(u8g2_font_secretaryhand_tr);
-    //  u8g2.drawStr(0, 32, "Hi"); 
-    //  u8g2.setFont(u8g2_font_freedoomr10_mu);
-    //  u8g2.drawStr(56, 48, "Hi"); 
-     break;                     
-   }	   
+    //  case 1: 
+    //  u8g2.setFont(u8g2_font_jinxedwizards_tr);
+    //  u8g2.drawStr(56, 16, "Hi");  
+    //  break;                     
 }
 
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Wire.begin(8, 9); 
+  Wire.begin(8, 9); //8 blue sda, 9 yellow scl
 
-  // if (!mpu.begin()) {
-  //   Serial.println("MPU-6050 not found — run the I2C scanner first.");
-  //   while (true) delay(1000);
-  // }
-  // mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  if (!mpu.begin()) {
+    Serial.println("MPU-6050 not found — run the I2C scanner first.");
+    while (true) delay(1000);
+  }
+  mpu.setAccelerometerRange(MPU6050_RANGE_2_G); //machine should not need to handle higher G force
+  mpu.setGyroRange(MPU6050_RANGE_250_DEG);      //slower smoother turns 
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);   //low pass filter 
 
   u8g2.begin();       //Initialize the function
   u8g2.setFontPosTop();  /*When you use drawStr to display strings, the default criteria is to display the lower-left
@@ -61,25 +77,24 @@ void setup() {
   }	  
 
 void loop() {
-  // sensors_event_t a, g, t;
-  // mpu.getEvent(&a, &g, &t);           // acceleration in m/s^2
+  sensors_event_t a, g, t;
+  uint32_t t0 = millis();
+  mpu.getEvent(&a, &g, &t);           // acceleration in m/s^2
 
-  // Serial.printf("%.2f,%.2f,%.2f\n",
-  //               a.acceleration.x, a.acceleration.y, a.acceleration.z);
+  Serial.printf("Accelerometer: %.2f,%.2f,%.2f\n",
+                a.acceleration.x, a.acceleration.y, a.acceleration.z);
 
-  // delay(20);    //50Hz
-  for( int i = 0; i <2 ; i++)
-  {
-   /*
-	* firstPage will change the current page number position to 0
-	* When modifications are between firstpage and nextPage, they will be re-rendered at each time.
-	* This method consumes less ram space than sendBuffer
-   */ 
-    u8g2.firstPage();   
-    do
-	  {
-		  draw(i);
-	  } while( u8g2.nextPage() );
-	  delay(2000);
-  }
-}
+  Serial.printf("Gyro: %.2f,%.2f,%.2f\n",
+              g.gyro.x, g.gyro.y, g.gyro.z);
+
+  delay(20);    //50Hz sample rate of IMU (NOT currently verified)
+  uint32_t td0 = millis();
+	draw(a, g); // drawing takes 32 ms 
+  uint32_t td1 = millis();
+  uint32_t drawelapsed = td1 - td0;
+  Serial.printf("Elapsed draw time: %d ms\n", drawelapsed);
+	// delay(2000);
+  uint32_t t1 = millis();
+  uint32_t elapsed = t1 - t0;
+  Serial.printf("Elapsed loop time: %d ms\n", elapsed);
+} //total loop time is 53ms
