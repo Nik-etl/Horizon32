@@ -95,12 +95,10 @@ void loop() {
   do {
     uint32_t t_draw = micros();
     draw(a, g); //drawing takes 32 ms
-    draw_cpu_us += (micros() - t_draw); // Accumulate only draw() execution
-    counter +=1;
-  } while (u8g2.nextPage()); // goes through 8 pages
-  Serial.printf("Pages update counter = %d \n", counter);
+    draw_cpu_us += (micros() - t_draw); // Accumulate only draw() execution roughly 0.9ms per page 3.7ms total
+  } while (u8g2.nextPage()); // goes through 8 pages, could pass up a mutex each time n pages is completed for sensor reading? 
   uint32_t total_display_us = micros() - td_total_start;
-  uint32_t bus_transfer_us = total_display_us - draw_cpu_us;
+  uint32_t bus_transfer_us = total_display_us - draw_cpu_us; // around 30 ms
 
   Serial.printf("Display Total: %lu us | CPU Draw: %lu us | Bus Transfer: %lu us\n", 
                 total_display_us, draw_cpu_us, bus_transfer_us);
