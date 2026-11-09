@@ -6,19 +6,23 @@
 /*
 TODO 
 
-- External pull ups
-- Configure clocks I2C and sample rates
-- buffer handling in function or page buffer drawing loop? 
+NOT IN ORDER 
 - Graphics
 - RTOS task planning 
 - FreeRTOS integration
+- Incorporate filter IIR or FIR to smooth accelerometer
 */
 Adafruit_MPU6050 mpu;
 
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(/* rotation=*/U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(/* rotation=*/U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 constexpr uint8_t SDA_PIN = 8; //blue
 constexpr uint8_t SCL_PIN = 9; //yellow
+constexpr unsigned long I2C_FREQUENCY = 400000; //I2C configured to 400KHz (Fast mode)
+
+// filter stuff
+// const int NUM_SAMPLES = 10; 
+// const int NUM_AXES = 3;
 
 // constexpr uint8_t MPU_address = 0x68;
 // constexpr uint8_t OLED_address = 0x3c;
@@ -26,7 +30,7 @@ constexpr uint8_t SCL_PIN = 9; //yellow
 void draw(sensors_event_t a,sensors_event_t g)
 {
       //accelerometer
-      u8g2.clearBuffer();
+      // u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_jinxedwizards_tr);
       u8g2.drawStr(5, 0, "X:");  
       u8g2.setCursor(20, 0);
@@ -49,18 +53,14 @@ void draw(sensors_event_t a,sensors_event_t g)
       u8g2.drawStr(60, 40, "Z:");  
       u8g2.setCursor(80, 40);
       u8g2.print(g.gyro.z);
-      u8g2.sendBuffer();
-    //  case 1: 
-    //  u8g2.setFont(u8g2_font_jinxedwizards_tr);
-    //  u8g2.drawStr(56, 16, "Hi");  
-    //  break;                     
+      // u8g2.sendBuffer();              
 }
 
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Wire.begin(8, 9); //8 blue sda, 9 yellow scl
+  Wire.begin(SDA_PIN, SCL_PIN, I2C_FREQUENCY); //8 blue sda, 9 yellow scl
 
   if (!mpu.begin()) {
     Serial.println("MPU-6050 not found — run the I2C scanner first.");
@@ -87,13 +87,25 @@ void loop() {
   Serial.printf("Gyro: %.2f,%.2f,%.2f\n",
               g.gyro.x, g.gyro.y, g.gyro.z);
 
-  delay(20);    //50Hz sample rate of IMU (NOT currently verified)
-  uint32_t td0 = millis();
-	draw(a, g); // drawing takes 32 ms 
-  uint32_t td1 = millis();
-  uint32_t drawelapsed = td1 - td0;
-  Serial.printf("Elapsed draw time: %d ms\n", drawelapsed);
-	// delay(2000);
+  // delay(20);   50Hz sample rate of IMU (NOT currently verified)
+  uint8_t counter = 0;
+  uint32_t draw_cpu_us = 0;
+  uint32_t td_total_start = micros();
+  u8g2.firstPage(); // saves 896 bytes compared to full buffer 
+  do {
+    uint32_t t_draw = micros();
+    draw(a, g); //drawing takes 32 ms
+    draw_cpu_us += (micros() - t_draw); // Accumulate only draw() execution
+    counter +=1;
+  } while (u8g2.nextPage()); // goes through 8 pages
+  Serial.printf("Pages update counter = %d \n", counter);
+  uint32_t total_display_us = micros() - td_total_start;
+  uint32_t bus_transfer_us = total_display_us - draw_cpu_us;
+
+  Serial.printf("Display Total: %lu us | CPU Draw: %lu us | Bus Transfer: %lu us\n", 
+                total_display_us, draw_cpu_us, bus_transfer_us);
+	
+  // delay(2000);
   uint32_t t1 = millis();
   uint32_t elapsed = t1 - t0;
   Serial.printf("Elapsed loop time: %d ms\n", elapsed);
