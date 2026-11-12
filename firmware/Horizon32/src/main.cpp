@@ -8,10 +8,12 @@ TODO
 Optimize display area - at least to bring write time down NOT NEEDED MPU falls fine in deadline 20ms, can be called in between each section write 
 
 NOT IN ORDER 
+- Benchmark draw function, sensor math, etc. 
+- Gyro implementation
 - Graphics
-- RTOS task planning 
 - FreeRTOS integration
 - Incorporate filter IIR or FIR to smooth accelerometer
+- LAST: background graphics ... horizon
 */
 // --- HARDWARE & CONFIGS ---
 Adafruit_MPU6050 mpu;
@@ -28,9 +30,9 @@ QueueHandle_t sensorMailbox;
 QueueHandle_t commandQueue;
 
 // --- Data Structures ---
-struct SensorData {
-  sensors_event_t a;
-  sensors_event_t g;
+struct AttitudeData {
+  float pitch; //  rads (for now)
+  float roll;  //  rads (for now)
 };
 
 enum SystemCommand { CMD_NONE, CMD_CALIBRATE };
@@ -52,33 +54,28 @@ void buttonTask(void *pvParameters);
 //-----------------------------
 //  DRAWING LOGIC (Graphics Mode)
 //-----------------------------
-void draw_to_ram(const SensorData& data) {
+// TODO: implement edge handling
+void draw_to_ram(const AttitudeData& attitude) {
   u8g2.clearBuffer(); 
-  u8g2.setDrawColor(1); // 1 = White. Force visible pixels
+  u8g2.setDrawColor(1); 
 
-  // 1. Calculate rough Pitch and Roll from Accelerometer (in Radians)
-  float roll = atan2(data.a.acceleration.y, data.a.acceleration.z);
-  float pitch = atan2(-data.a.acceleration.x, 
-                sqrt(data.a.acceleration.y * data.a.acceleration.y + 
-                     data.a.acceleration.z * data.a.acceleration.z));
+  // 1. Map Pitch to a vertical pixel shift (Center is Y=32)
+  int y_center = 32 + (int)(attitude.pitch * 30.0);
 
-  // 2. Map Pitch to a vertical pixel shift (Center is Y=32)
-  int y_center = 32 + (int)(pitch * 30.0);
+  // 2. Calculate the endpoints of the horizon line based on Roll
+  int x1 = 64 - (int)(cos(attitude.roll) * 40);
+  int y1 = y_center - (int)(sin(attitude.roll) * 40);
+  int x2 = 64 + (int)(cos(attitude.roll) * 40);
+  int y2 = y_center + (int)(sin(attitude.roll) * 40);
 
-  // 3. Calculate the endpoints of the horizon line based on Roll
-  int x1 = 64 - (int)(cos(roll) * 40);
-  int y1 = y_center - (int)(sin(roll) * 40);
-  int x2 = 64 + (int)(cos(roll) * 40);
-  int y2 = y_center + (int)(sin(roll) * 40);
-
-  // 4. Draw the moving horizon line
+  // 3. Draw the moving horizon line
   u8g2.drawLine(x1, y1, x2, y2);
 
-  // 5. Draw a static airplane crosshair in the exact center (64, 32)
-  u8g2.drawPixel(64, 32);       // Center dot
-  u8g2.drawHLine(54, 32, 8);    // Left wing
-  u8g2.drawHLine(66, 32, 8);    // Right wing
-  u8g2.drawVLine(64, 24, 6);    // Tail
+  // 4. Draw a static airplane crosshair in the exact center (64, 32)
+  u8g2.drawPixel(64, 32);       
+  u8g2.drawHLine(54, 32, 8);    
+  u8g2.drawHLine(66, 32, 8);    
+  u8g2.drawVLine(64, 24, 6);    
 }
 
 //-----------------------------
@@ -106,13 +103,13 @@ void setup() {
 
   // 2. Initialize RTOS Primitives
   i2cMutex = xSemaphoreCreateMutex();
-  sensorMailbox = xQueueCreate(1, sizeof(SensorData)); // Length 1 for latest data only
+  sensorMailbox = xQueueCreate(1, sizeof(AttitudeData)); // Length 1 for latest data only
   commandQueue = xQueueCreate(5, sizeof(SystemCommand)); // Queue for button presses
 
   // 3. Launch Tasks
   if (i2cMutex != NULL && sensorMailbox != NULL && commandQueue != NULL) {
     // xTaskCreate(Function, Name, Stack Size, Params, Priority, Handle)
-    // Priority: 3 is highest, 1 is lowest
+    // priority: 3 highest, 1 lowest
     xTaskCreatePinnedToCore(sensorTask,  "Sensor",  4096, NULL, 3, NULL, 1); 
     xTaskCreatePinnedToCore(buttonTask,  "Button",  2048, NULL, 2, NULL, 1); 
     xTaskCreatePinnedToCore(displayTask, "Display", 4096, NULL, 1, NULL, 1); 
@@ -128,40 +125,35 @@ void setup() {
 //-----------------------------
 
 void sensorTask(void *pvParameters) {
-  SensorData currentData;
-  sensors_event_t temp; // Required by getEvent but unused
+  AttitudeData currentAttitude; // New struct
+  sensors_event_t a, g, temp; 
   SystemCommand cmd;
 
-  // 1. Initialize the tick count variable
-  TickType_t xLastWakeTime;
-  xLastWakeTime = xTaskGetTickCount();
+  TickType_t xLastWakeTime = xTaskGetTickCount(); 
 
   for (;;) {
-
-    // 1. Check for incoming button commands (Non-blocking)
     if (xQueueReceive(commandQueue, &cmd, 0) == pdTRUE) {
-      if (cmd == CMD_CALIBRATE) {
-        Serial.println("Calibration triggered! (Placeholder to collect N samples)");
-        // TODO: Collect samples and average bias here
-      }
+      if (cmd == CMD_CALIBRATE) Serial.println("Calibration triggered!");
     }
 
-    // 2. Safely claim I2C Bus and read IMU
-    // We wait up to 5ms for the Mutex. If the display has it, we wait.
+    // 1. Read the raw data
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      mpu.getEvent(&currentData.a, &currentData.g, &temp);
-      xSemaphoreGive(i2cMutex); // Release bus instantly
-    } else {
-      Serial.println("WARNING: Sensor Task missed I2C deadline!");
+      mpu.getEvent(&a, &g, &temp);
+      xSemaphoreGive(i2cMutex); 
     }
 
-    // 3. TODO: Run Attitude Filter math here
+    // 2. THE ATTITUDE FILTER (Physics Math)
+    // For now, it's just accelerometer math
+    // TODO: GYRO MATH 
+    currentAttitude.roll = atan2(a.acceleration.y, a.acceleration.z);
+    currentAttitude.pitch = atan2(-a.acceleration.x, 
+                            sqrt(a.acceleration.y * a.acceleration.y + 
+                                 a.acceleration.z * a.acceleration.z));
 
-    // 4. Overwrite mailbox with the freshest data for the Display Task
-    xQueueOverwrite(sensorMailbox, &currentData);
-
-    // 5. Sleep exactly enough to maintain 100Hz (10ms deadline)
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
+    // 3. Send the computed angles to the display
+    xQueueOverwrite(sensorMailbox, &currentAttitude);
+    
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10)); // 100Hz
   }
 }
 
@@ -170,30 +162,53 @@ void sensorTask(void *pvParameters) {
 //-----------------------------
 
 void displayTask(void *pvParameters) {
-  SensorData displayData;
+  AttitudeData displayData;
   Serial.println("Display Task started.");
 
+  xQueueReceive(sensorMailbox, &displayData, portMAX_DELAY);
+  
+  // Draw it to the ESP32 RAM
+  draw_to_ram(displayData);
+  
+  // Force a full screen update to wipe out any old text/garbage on the OLED
+  if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    u8g2.sendBuffer();
+    xSemaphoreGive(i2cMutex);
+  }
+
+  // ==========================================
+  // 2. MAIN LOOP (Optimized Chunking)
+  // ==========================================
   for (;;) {
-    // 1. Wait for data, but don't wait forever. Wait 1 second max.
-    if (xQueueReceive(sensorMailbox, &displayData, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    // Wait up to 100ms for fresh data
+    if (xQueueReceive(sensorMailbox, &displayData, pdMS_TO_TICKS(100)) == pdTRUE) {
       
+      // Calculate angles for wing orientation and draw all pixels to ESP32 RAM 
       draw_to_ram(displayData);
 
-      // 2. Temporarily use a full sendBuffer() to prove the OLED works
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        u8g2.sendBuffer();
-        xSemaphoreGive(i2cMutex);
-      } else {
-        Serial.println("Display Task: Couldn't get I2C Mutex!");
+      // Transmit the screen over I2C in 4 horizontal slices
+      // OLED has 8 rows 
+      // currently sending 2 rows at a time
+      for (uint8_t row = 0; row < 8; row += 2) {
+        
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+          // updateDisplayArea(tile_x, tile_y, width_tiles, height_tiles)
+          // starts at X=0, Y=page, full width (16), 2 tiles high
+          u8g2.updateDisplayArea(0, row, 16, 2);
+          xSemaphoreGive(i2cMutex);
+        }
+        
+        // YIELD: Give the 100Hz Sensor Task a 2ms window to grab 
+        // the I2C Mutex in between each visual slice we send!
+        vTaskDelay(pdMS_TO_TICKS(2));
       }
       
     } else {
-      // If we see this in the Serial Monitor, the Sensor Task is broken/frozen!
       Serial.println("Display Task: Mailbox is empty! Sensor Task is not sending data.");
     }
     
-    // Sleep to maintain ~20Hz
-    vTaskDelay(pdMS_TO_TICKS(50)); 
+    // Sleep to maintain ~20Hz refresh rate (50ms total per frame)
+    vTaskDelay(pdMS_TO_TICKS(30)); 
   }
 }
 //-----------------------------
