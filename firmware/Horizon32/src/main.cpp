@@ -5,6 +5,8 @@
 
 /*
 TODO 
+Optimize display area - at least to bring write time down NOT NEEDED MPU falls fine in deadline 20ms, can be called in between each section write 
+
 NOT IN ORDER 
 - Graphics
 - RTOS task planning 
@@ -64,7 +66,7 @@ void draw(sensors_event_t a, sensors_event_t g)
       u8g2.print(g.gyro.z);
 
       // uint32_t draw_cpu = micros() - time0;
-      // Serial.printf("CPU draw time: %d us\n", draw_cpu);
+      // Serial.printf("CPU draw time: %lu us\n", draw_cpu);
 
       // -- Transmit to OLED --
       if (firstFrame) {
@@ -80,10 +82,16 @@ void draw(sensors_event_t a, sensors_event_t g)
         // tw, th = width and height in tiles
         
         // 1. Update Accel numbers: Start Tile X=2 (pixel 16), Tile Y=0. Width=6 tiles, Height=6 tiles (pixels 0-48)
+        uint32_t dt0 = micros();
         u8g2.updateDisplayArea(2, 0, 6, 6);
+        uint32_t up1 = micros() - dt0;
+        Serial.printf("UpdateDisplayArea took acc %lu us\n", up1);
         
         // 2. Update Gyro numbers: Start Tile X=10 (pixel 80), Tile Y=0. Width=6 tiles, Height=6 tiles
+        uint32_t dt1 = micros();
         u8g2.updateDisplayArea(10, 0, 6, 6);
+        uint32_t up2 = micros() - dt1;
+        Serial.printf("UpdateDisplayArea gyro took %lu us\n", up2);
       }              
 }
 
@@ -91,8 +99,7 @@ void draw(sensors_event_t a, sensors_event_t g)
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Wire.setClock(I2C_FREQUENCY);
-  Wire.begin(SDA_PIN, SCL_PIN, I2C_FREQUENCY); //8 blue sda, 9 yellow scl
+  Wire.begin(SDA_PIN, SCL_PIN); //8 blue sda, 9 yellow scl
 
   if (!mpu.begin()) {
     Serial.println("MPU-6050 not found — run the I2C scanner first.");
@@ -100,7 +107,7 @@ void setup() {
   }
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G); //machine should not need to handle higher G force
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);      //slower smoother turns 
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);   //low pass filter 
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);   //low pass filter introduces 8.5ms delay NOT VERIFIED
 
   u8g2.setBusClock(I2C_FREQUENCY);
   u8g2.begin();       //Initialize the function
@@ -138,5 +145,5 @@ void setup() {
   // delay(2000);
   uint32_t t1 = millis();
   uint32_t elapsed = t1 - t0;
-  Serial.printf("Elapsed loop time: %d ms\n", elapsed);
+  Serial.printf("Elapsed loop time: %lu ms\n", elapsed);
 } //total loop time is 34ms
