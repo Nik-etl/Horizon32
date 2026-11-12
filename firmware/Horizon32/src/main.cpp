@@ -73,70 +73,6 @@ void draw_to_ram(const SensorData& data) {
   u8g2.drawStr(60, 40, "Z:");  
   u8g2.setCursor(80, 40); u8g2.print(data.g.gyro.z);
 }
-void draw(sensors_event_t a, sensors_event_t g)
-{
-      u8g2.clearBuffer(); // Clear the RAM buffer
-
-      // uint32_t time0 = micros();
-      
-      // -- Draw everything to RAM --
-      u8g2.setFont(u8g2_font_jinxedwizards_tr);
-      
-      // Accelerometer
-      u8g2.drawStr(5, 0, "X:");  
-      u8g2.setCursor(20, 0);
-      u8g2.print(a.acceleration.x);
-      
-      u8g2.drawStr(5, 20, "Y:");  
-      u8g2.setCursor(20, 20);
-      u8g2.print(a.acceleration.y);
-      
-      u8g2.drawStr(5, 40, "Z:");  
-      u8g2.setCursor(20, 40);
-      u8g2.print(a.acceleration.z);
-
-      // Gyroscope
-      u8g2.drawStr(60, 0, "X:");  
-      u8g2.setCursor(80, 0);
-      u8g2.print(g.gyro.x);
-      
-      u8g2.drawStr(60, 20, "Y:");  
-      u8g2.setCursor(80, 20);
-      u8g2.print(g.gyro.y);
-      
-      u8g2.drawStr(60, 40, "Z:");  
-      u8g2.setCursor(80, 40);
-      u8g2.print(g.gyro.z);
-
-      // uint32_t draw_cpu = micros() - time0;
-      // Serial.printf("CPU draw time: %lu us\n", draw_cpu);
-
-      // -- Transmit to OLED --
-      if (firstFrame) {
-        // On the very first loop, send the whole 128x64 buffer so the 
-        // static "X:", "Y:", "Z:" labels get pushed to the display.
-        u8g2.sendBuffer(); 
-        firstFrame = false;
-      } else {
-        // Only send the tiles where the numbers are changing
-        
-        // updateDisplayArea(tx, ty, tw, th)
-        // tx, ty = starting tile (0-15 for X, 0-7 for Y)
-        // tw, th = width and height in tiles
-        
-        // 1. Update Accel numbers: Start Tile X=2 (pixel 16), Tile Y=0. Width=6 tiles, Height=6 tiles (pixels 0-48)
-        uint32_t dt0 = micros();
-        u8g2.updateDisplayArea(2, 0, 6, 6);
-        uint32_t up1 = micros() - dt0;
-        Serial.printf("UpdateDisplayArea took acc %lu us\n", up1);
-        
-        // 2. Update Gyro numbers: Start Tile X=10 (pixel 80), Tile Y=0. Width=6 tiles, Height=6 tiles
-        uint32_t dt1 = micros();
-        u8g2.updateDisplayArea(10, 0, 6, 6);
-        uint32_t up2 = micros() - dt1;
-        Serial.printf("UpdateDisplayArea gyro took %lu us\n", up2);
-      }              
-}
 
 //-----------------------------
 //  SYSTEM SETUP
@@ -189,8 +125,11 @@ void sensorTask(void *pvParameters) {
   sensors_event_t temp; // Required by getEvent but unused
   SystemCommand cmd;
 
+  // 1. Initialize the tick count variable
+  TickType_t xLastWakeTime;
+  xLastWakeTime = xTaskGetTickCount();
+
   for (;;) {
-    uint32_t loopStartTime = millis();
 
     // 1. Check for incoming button commands (Non-blocking)
     if (xQueueReceive(commandQueue, &cmd, 0) == pdTRUE) {
@@ -204,7 +143,7 @@ void sensorTask(void *pvParameters) {
     // We wait up to 5ms for the Mutex. If the display has it, we wait.
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       mpu.getEvent(&currentData.a, &currentData.g, &temp);
-      xSemaphoreGive(i2cMutex); // Release bus instantly!
+      xSemaphoreGive(i2cMutex); // Release bus instantly
     } else {
       Serial.println("WARNING: Sensor Task missed I2C deadline!");
     }
@@ -215,7 +154,7 @@ void sensorTask(void *pvParameters) {
     xQueueOverwrite(sensorMailbox, &currentData);
 
     // 5. Sleep exactly enough to maintain 100Hz (10ms deadline)
-    vTaskDelayUntil((TickType_t*)&loopStartTime, pdMS_TO_TICKS(10));
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
   }
 }
 
@@ -242,34 +181,26 @@ void displayTask(void *pvParameters) {
       draw_to_ram(displayData);
 
       // 3. Transmit to OLED safely over I2C in chunks
-      if (firstFrame) {
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-          u8g2.sendBuffer();
-          xSemaphoreGive(i2cMutex);
-          firstFrame = false;
-        }
-      } else {
         // --- CHUNK 1: Accelerometer ---
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-          u8g2.updateDisplayArea(2, 0, 6, 6);
-          xSemaphoreGive(i2cMutex);
-        }
-        
-        // YIELD: Give the Sensor Task a 2ms window to grab the Mutex 
-        // in between sending display chunks!
-        vTaskDelay(pdMS_TO_TICKS(2));
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        u8g2.updateDisplayArea(2, 0, 6, 6);
+        xSemaphoreGive(i2cMutex);
+      }
+      
+      // YIELD: Give the Sensor Task a 2ms window to grab the Mutex 
+      // in between sending display chunks!
+      vTaskDelay(pdMS_TO_TICKS(2));
 
-        // --- CHUNK 2: Gyroscope ---
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-          u8g2.updateDisplayArea(10, 0, 6, 6);
-          xSemaphoreGive(i2cMutex);
-        }
+      // --- CHUNK 2: Gyroscope ---
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        u8g2.updateDisplayArea(10, 0, 6, 6);
+        xSemaphoreGive(i2cMutex);
       }
     }
+  }
     
     // Sleep roughly 40ms to hit a ~20Hz (50ms) refresh rate target
     vTaskDelay(pdMS_TO_TICKS(40)); 
-  }
 }
 
 //-----------------------------
