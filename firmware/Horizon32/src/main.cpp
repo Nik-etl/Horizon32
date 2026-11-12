@@ -50,28 +50,35 @@ void buttonTask(void *pvParameters);
 // constexpr uint8_t OLED_address = 0x3c;
 
 //-----------------------------
-//  DRAWING LOGIC 
+//  DRAWING LOGIC (Graphics Mode)
 //-----------------------------
 void draw_to_ram(const SensorData& data) {
-  u8g2.clearBuffer(); // Clear the ESP32 RAM buffer
+  u8g2.clearBuffer(); 
+  u8g2.setDrawColor(1); // 1 = White. Force visible pixels
 
-  u8g2.setFont(u8g2_font_jinxedwizards_tr);
-  
-  // Accelerometer
-  u8g2.drawStr(5, 0, "X:");  
-  u8g2.setCursor(20, 0); u8g2.print(data.a.acceleration.x);
-  u8g2.drawStr(5, 20, "Y:");  
-  u8g2.setCursor(20, 20); u8g2.print(data.a.acceleration.y);
-  u8g2.drawStr(5, 40, "Z:");  
-  u8g2.setCursor(20, 40); u8g2.print(data.a.acceleration.z);
+  // 1. Calculate rough Pitch and Roll from Accelerometer (in Radians)
+  float roll = atan2(data.a.acceleration.y, data.a.acceleration.z);
+  float pitch = atan2(-data.a.acceleration.x, 
+                sqrt(data.a.acceleration.y * data.a.acceleration.y + 
+                     data.a.acceleration.z * data.a.acceleration.z));
 
-  // Gyroscope
-  u8g2.drawStr(60, 0, "X:");  
-  u8g2.setCursor(80, 0); u8g2.print(data.g.gyro.x);
-  u8g2.drawStr(60, 20, "Y:");  
-  u8g2.setCursor(80, 20); u8g2.print(data.g.gyro.y);
-  u8g2.drawStr(60, 40, "Z:");  
-  u8g2.setCursor(80, 40); u8g2.print(data.g.gyro.z);
+  // 2. Map Pitch to a vertical pixel shift (Center is Y=32)
+  int y_center = 32 + (int)(pitch * 30.0);
+
+  // 3. Calculate the endpoints of the horizon line based on Roll
+  int x1 = 64 - (int)(cos(roll) * 40);
+  int y1 = y_center - (int)(sin(roll) * 40);
+  int x2 = 64 + (int)(cos(roll) * 40);
+  int y2 = y_center + (int)(sin(roll) * 40);
+
+  // 4. Draw the moving horizon line
+  u8g2.drawLine(x1, y1, x2, y2);
+
+  // 5. Draw a static airplane crosshair in the exact center (64, 32)
+  u8g2.drawPixel(64, 32);       // Center dot
+  u8g2.drawHLine(54, 32, 8);    // Left wing
+  u8g2.drawHLine(66, 32, 8);    // Right wing
+  u8g2.drawVLine(64, 24, 6);    // Tail
 }
 
 //-----------------------------
@@ -164,45 +171,31 @@ void sensorTask(void *pvParameters) {
 
 void displayTask(void *pvParameters) {
   SensorData displayData;
+  Serial.println("Display Task started.");
 
-  // Wait for the FIRST piece of data to arrive
-  xQueueReceive(sensorMailbox, &displayData, portMAX_DELAY);
-  // Draw and send the FULL screen once
-  draw_to_ram(displayData);
-  if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
-    u8g2.sendBuffer();
-    xSemaphoreGive(i2cMutex);
-  }
   for (;;) {
-    
-    if (xQueueReceive(sensorMailbox, &displayData, pdMS_TO_TICKS(100)) == pdTRUE) {
+    // 1. Wait for data, but don't wait forever. Wait 1 second max.
+    if (xQueueReceive(sensorMailbox, &displayData, pdMS_TO_TICKS(1000)) == pdTRUE) {
       
-      // 2. Draw everything into ESP32 RAM (Fast, CPU only, no Mutex)
       draw_to_ram(displayData);
 
-      // 3. Transmit to OLED safely over I2C in chunks
-        // --- CHUNK 1: Accelerometer ---
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        u8g2.updateDisplayArea(2, 0, 6, 6);
+      // 2. Temporarily use a full sendBuffer() to prove the OLED works
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        u8g2.sendBuffer();
         xSemaphoreGive(i2cMutex);
+      } else {
+        Serial.println("Display Task: Couldn't get I2C Mutex!");
       }
       
-      // YIELD: Give the Sensor Task a 2ms window to grab the Mutex 
-      // in between sending display chunks!
-      vTaskDelay(pdMS_TO_TICKS(2));
-
-      // --- CHUNK 2: Gyroscope ---
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        u8g2.updateDisplayArea(10, 0, 6, 6);
-        xSemaphoreGive(i2cMutex);
-      }
+    } else {
+      // If we see this in the Serial Monitor, the Sensor Task is broken/frozen!
+      Serial.println("Display Task: Mailbox is empty! Sensor Task is not sending data.");
     }
-  }
     
-    // Sleep roughly 40ms to hit a ~20Hz (50ms) refresh rate target
-    vTaskDelay(pdMS_TO_TICKS(40)); 
+    // Sleep to maintain ~20Hz
+    vTaskDelay(pdMS_TO_TICKS(50)); 
+  }
 }
-
 //-----------------------------
 //    BUTTON TASK
 //-----------------------------
