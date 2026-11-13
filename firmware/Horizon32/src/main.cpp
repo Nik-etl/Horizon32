@@ -125,7 +125,7 @@ void setup() {
 //-----------------------------
 
 void sensorTask(void *pvParameters) {
-  AttitudeData currentAttitude; // New struct
+  AttitudeData currentAttitude; 
   sensors_event_t a, g, temp; 
   SystemCommand cmd;
 
@@ -152,8 +152,8 @@ void sensorTask(void *pvParameters) {
 
     // 3. Send the computed angles to the display
     xQueueOverwrite(sensorMailbox, &currentAttitude);
-    
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10)); // 100Hz
+    // waits exactly 10ms to ensure it meets 100Hz deadline
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10)); // 100Hz 
   }
 }
 
