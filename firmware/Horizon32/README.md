@@ -1,9 +1,5 @@
-## Useful notes for task planning:
-
-* mutex to protect the i2c bus
-* IMU reads can wait for draws
-* Do not need to send full buffer at a time. 
-
+## TODO
+-    Implement !=pdPass logic to ensure code safety (ie: xTaskCreate(eventTask, "Event", 4096, nullptr, 2, nullptr) != pdPASS) {)
 # Task planning
 **Sensor Task** higher priority
     - Read MPU, Calculation, write to global variable
