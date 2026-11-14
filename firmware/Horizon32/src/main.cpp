@@ -7,9 +7,7 @@
 TODO 
 
 NOT IN ORDER 
-- Hardware interrupt and ISR
 - Benchmark draw function, sensor math, etc. 
-- Gyro implementation
 - Incorporate filter IIR or FIR to smooth accelerometer
 - LAST: background graphics ... horizon edge handling: when line touches top 
 */
@@ -283,7 +281,7 @@ void displayTask(void *pvParameters) {
       // display task is blocked until new sensor data is sent after calibration
       xQueueReceive(sensorMailbox, &displayData, portMAX_DELAY);
       }
-      
+
       // Calculate angles for wing orientation and draw all pixels to ESP32 RAM 
       draw_to_ram(displayData);
 
