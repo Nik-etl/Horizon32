@@ -11,7 +11,7 @@ NOT IN ORDER
 - Benchmark draw function, sensor math, etc. 
 - Gyro implementation
 - Incorporate filter IIR or FIR to smooth accelerometer
-- LAST: background graphics ... horizon
+- LAST: background graphics ... horizon edge handling: when line touches top 
 */
 
 // --- HARDWARE & CONFIGS ---
@@ -27,11 +27,13 @@ constexpr unsigned long I2C_FREQUENCY = 400000; //I2C configured to 400KHz (Fast
 SemaphoreHandle_t i2cMutex;
 QueueHandle_t sensorMailbox;
 QueueHandle_t commandQueue;
+SemaphoreHandle_t buttonSemaphore; 
 
 // --- Data Structures ---
 struct AttitudeData {
   float pitch; //  rads (for now)
   float roll;  //  rads (for now)
+  bool isCalibrating; //could use enum SystemState 
 };
 
 enum SystemCommand { CMD_NONE, CMD_CALIBRATE };
@@ -58,6 +60,13 @@ void draw_to_ram(const AttitudeData& attitude) {
   u8g2.clearBuffer(); 
   u8g2.setDrawColor(1); 
 
+  // calibration draw
+  if (attitude.isCalibrating) {
+    u8g2.setFont(u8g2_font_ncenB08_tr); // Standard readable font
+    u8g2.drawStr(20, 30, "Calibrating...");
+    return; // prevents further drawing 
+  }
+
   // 1. Map Pitch to a vertical pixel shift (Center is Y=32)
   int y_center = 32 + (int)(attitude.pitch * 30.0);
 
@@ -75,6 +84,20 @@ void draw_to_ram(const AttitudeData& attitude) {
   u8g2.drawHLine(54, 32, 8);    
   u8g2.drawHLine(66, 32, 8);    
   u8g2.drawVLine(64, 24, 6);    
+}
+
+//-----------------------------
+//   ISR
+//-----------------------------
+
+void ARDUINO_ISR_ATTR buttonISR() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  
+  // Give the semaphore to wake up the Button Task
+  xSemaphoreGiveFromISR(buttonSemaphore, &xHigherPriorityTaskWoken);
+  
+  // If waking the Button Task requires a context switch, do it immediately
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 //-----------------------------
@@ -104,9 +127,14 @@ void setup() {
   i2cMutex = xSemaphoreCreateMutex();
   sensorMailbox = xQueueCreate(1, sizeof(AttitudeData)); // Length 1 for latest data only
   commandQueue = xQueueCreate(5, sizeof(SystemCommand)); // Queue for button presses
+  buttonSemaphore = xSemaphoreCreateBinary();
+  
+  // Interrupt initialization
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, CHANGE);
 
   // 3. Launch Tasks
-  if (i2cMutex != NULL && sensorMailbox != NULL && commandQueue != NULL) {
+  if (i2cMutex != NULL && sensorMailbox != NULL && commandQueue != NULL) { //TODO: PDPASS CONDITIONAL
     // xTaskCreate(Function, Name, Stack Size, Params, Priority, Handle)
     // priority: 3 highest, 1 lowest
     xTaskCreatePinnedToCore(sensorTask,  "Sensor",  4096, NULL, 3, NULL, 1); 
@@ -125,6 +153,8 @@ void setup() {
 
 void sensorTask(void *pvParameters) {
   AttitudeData currentAttitude; 
+  currentAttitude.isCalibrating = false;
+
   sensors_event_t a, g, temp; 
   SystemCommand cmd;
 
@@ -132,7 +162,18 @@ void sensorTask(void *pvParameters) {
 
   for (;;) {
     if (xQueueReceive(commandQueue, &cmd, 0) == pdTRUE) {
-      if (cmd == CMD_CALIBRATE) Serial.println("Calibration triggered!");
+      if (cmd == CMD_CALIBRATE){
+        // Step A: Tell the display we are starting calibration
+        currentAttitude.isCalibrating = true;
+        xQueueOverwrite(sensorMailbox, &currentAttitude);
+        // TODO: Step B: Collect N samples to average the bias 
+        // (Placeholder: simulating a 2-second calibration process)
+        Serial.println("Calibrating IMU...");
+        vTaskDelay(pdMS_TO_TICKS(2000)); // "calibrating time" sensor sleeps so downstream display will also not update
+        
+        // Step C: Calibration done, resume normal operation
+        currentAttitude.isCalibrating = false;
+      }
     }
 
     // 1. Read the raw data
@@ -176,7 +217,7 @@ void displayTask(void *pvParameters) {
   }
 
   // ==========================================
-  // 2. MAIN LOOP (Optimized Chunking)
+  // 2. MAIN LOOP 
   // ==========================================
   for (;;) {
     // Wait up to 100ms for fresh data
@@ -215,32 +256,37 @@ void displayTask(void *pvParameters) {
 //-----------------------------
 
 void buttonTask(void *pvParameters) {
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  bool lastState = HIGH;
   uint32_t pressStartTime = 0;
+  bool isTrackingPress = false;
 
   for (;;) {
-    bool currentState = digitalRead(BUTTON_PIN);
-
-    // Falling edge (Button just pressed down)
-    if (currentState == LOW && lastState == HIGH) {
-      pressStartTime = millis();
-    }
-    // Rising edge (Button released)
-    else if (currentState == HIGH && lastState == LOW) {
-      // Calculate how long it was held
-      uint32_t holdDuration = millis() - pressStartTime;
+    // 1. Sleep until ISR sends semaphore
+    if (xSemaphoreTake(buttonSemaphore, portMAX_DELAY) == pdTRUE) {
       
-      // If held for over 1 second, send Calibration command
-      if (holdDuration >= 1000) {
-        SystemCommand cmd = CMD_CALIBRATE;
-        xQueueSend(commandQueue, &cmd, 0); // Send to command queue
-      }
-    }
-    
-    lastState = currentState;
+      // 2. Wait 20ms to let the physical button spring stop bouncing (Debounce)
+      vTaskDelay(pdMS_TO_TICKS(20));
 
-    // Sleep 30ms (software debouncing)
-    vTaskDelay(pdMS_TO_TICKS(30)); 
+      // 3. Read the stable state of the pin
+      bool isPressed = (digitalRead(BUTTON_PIN) == LOW);
+
+      // 4. Handle the logic
+      if (isPressed && !isTrackingPress) {
+        pressStartTime = millis();
+        isTrackingPress = true;
+      } 
+      else if (!isPressed && isTrackingPress) {
+        // Button was just released
+        isTrackingPress = false;
+        
+        // Evaluate button press time
+        if ((millis() - pressStartTime) >= 1000) {
+          SystemCommand cmd = CMD_CALIBRATE;
+          xQueueSend(commandQueue, &cmd, 0); 
+        }
+      }
+      
+      // Clear out any extra semaphores that piled up during the 20ms bounce
+      xQueueReset(buttonSemaphore); 
+    }
   }
 }
