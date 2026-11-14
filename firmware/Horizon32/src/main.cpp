@@ -155,6 +155,14 @@ void sensorTask(void *pvParameters) {
   AttitudeData currentAttitude; 
   currentAttitude.isCalibrating = false;
 
+  // --- Filter & Calibration Variables ---
+  float gyro_pitch = 0.0; 
+  float gyro_roll = 0.0;  
+  float pitch_bias = 0.0; 
+  float roll_bias = 0.0;  
+  const float dt = 0.01;    
+  const float alpha = 0.98;
+
   sensors_event_t a, g, temp; 
   SystemCommand cmd;
 
@@ -166,11 +174,38 @@ void sensorTask(void *pvParameters) {
         // Step A: Tell the display we are starting calibration
         currentAttitude.isCalibrating = true;
         xQueueOverwrite(sensorMailbox, &currentAttitude);
-        // TODO: Step B: Collect N samples to average the bias 
-        // (Placeholder: simulating a 2-second calibration process)
-        Serial.println("Calibrating IMU...");
-        vTaskDelay(pdMS_TO_TICKS(2000)); // "calibrating time" sensor sleeps so downstream display will also not update
+
+        float sum_pitch = 0.0;
+        float sum_roll = 0.0;
+        const int num_samples = 100;
+
+        // Step B: Take 100 readings (at 100hz = 1 second)
+        for (int i = 0; i < num_samples;i++){
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+          mpu.getEvent(&a, &g, &temp);
+          xSemaphoreGive(i2cMutex); 
+          }
+          
+          float sample_roll = atan2(a.acceleration.y, a.acceleration.z);
+          float sample_pitch = atan2(-a.acceleration.x, 
+            sqrt(a.acceleration.y * a.acceleration.y + 
+              a.acceleration.z * a.acceleration.z));
+              
+              sum_roll += sample_roll;
+              sum_pitch += sample_pitch;
+
+        vTaskDelay(pdMS_TO_TICKS(10)); // Wait 10ms before next sample
+        }
         
+        // Average biases calculation
+        pitch_bias = sum_pitch / num_samples;
+        roll_bias = sum_roll / num_samples;
+
+        // Reset running filter angles
+        gyro_pitch = 0.0;
+        gyro_roll = 0.0;
+
+
         // Step C: Calibration done, resume normal operation
         currentAttitude.isCalibrating = false;
       }
@@ -183,12 +218,23 @@ void sensorTask(void *pvParameters) {
     }
 
     // 2. THE ATTITUDE FILTER (Physics Math)
-    // For now, it's just accelerometer math
-    // TODO: GYRO MATH 
-    currentAttitude.roll = atan2(a.acceleration.y, a.acceleration.z);
-    currentAttitude.pitch = atan2(-a.acceleration.x, 
-                            sqrt(a.acceleration.y * a.acceleration.y + 
-                                 a.acceleration.z * a.acceleration.z));
+
+    float accel_roll = atan2(a.acceleration.y, a.acceleration.z) - roll_bias;
+    float accel_pitch = atan2(-a.acceleration.x, 
+                        sqrt(a.acceleration.y * a.acceleration.y + 
+                             a.acceleration.z * a.acceleration.z)) - pitch_bias;
+
+    // Gyroscope (integration, time slice/dt = 0.01s)
+    gyro_roll = gyro_roll + (g.gyro.x * dt);
+    gyro_pitch = gyro_pitch + (g.gyro.y * dt);
+
+    // Gyro makes up 98% of new angle 
+    gyro_roll = (alpha * gyro_roll) + ((1.0 - alpha) * accel_roll);
+    gyro_pitch = (alpha * gyro_pitch) + ((1.0 - alpha) * accel_pitch);
+
+
+    currentAttitude.roll = gyro_roll;
+    currentAttitude.pitch = gyro_pitch;
 
     // 3. Send the computed angles to the display
     xQueueOverwrite(sensorMailbox, &currentAttitude);
@@ -222,6 +268,21 @@ void displayTask(void *pvParameters) {
   for (;;) {
     // Wait up to 100ms for fresh data
     if (xQueueReceive(sensorMailbox, &displayData, pdMS_TO_TICKS(100)) == pdTRUE) {
+
+      // Calibration override
+      if (displayData.isCalibrating) {
+        
+        // 1. Draw the text to RAM
+        draw_to_ram(displayData);
+        
+        // 2. Send it ONCE using a fast full-screen update
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+          u8g2.sendBuffer();
+          xSemaphoreGive(i2cMutex);
+        }
+      // display task is blocked until new sensor data is sent after calibration
+      xQueueReceive(sensorMailbox, &displayData, portMAX_DELAY);
+      }
       
       // Calculate angles for wing orientation and draw all pixels to ESP32 RAM 
       draw_to_ram(displayData);
