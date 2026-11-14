@@ -15,8 +15,6 @@
 **Button Task** medium
     - ISR for button calls this task when hold is over 1 second shorter presses ignored
     - sends command queue to sensor task 
-    - Perhaps hold button for sufficient time to let the task read
-    - Future could use a transistor toggle like circuit or capacitor to time discharge
 **Display Task** lower than sensor
     - Read variables, calculate graphic, update OLED 
     - deadline <100ms(10Hz) (20Hz optimal for crisp responsive graphics)

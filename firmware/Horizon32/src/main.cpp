@@ -5,9 +5,9 @@
 
 /*
 TODO 
-Optimize display area - at least to bring write time down NOT NEEDED MPU falls fine in deadline 20ms, can be called in between each section write 
 
 NOT IN ORDER 
+- Hardware interrupt and ISR
 - Benchmark draw function, sensor math, etc. 
 - Gyro implementation
 - Graphics
