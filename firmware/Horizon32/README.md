@@ -1,5 +1,5 @@
 ## TODO
--    Implement !=pdPass logic to ensure code safety (ie: xTaskCreate(eventTask, "Event", 4096, nullptr, 2, nullptr) != pdPASS) {)
+-    Implement !=pdPass logic to ensure code safety (ie: xTaskCreate(eventTask, "Event", 4096, nullptr, 2, nullptr) != pdPASS) 
 -    Button
 -    Hardware interrupt use xSemaphoreGiveFromISR
 # Task planning
