@@ -8,7 +8,8 @@ TODO
 
 NOT IN ORDER 
 - Benchmark draw function, sensor math, etc. 
-- Incorporate filter IIR or FIR to smooth accelerometer
+- Evaluate calibration task need..
+- High pitch warning
 - LAST: background graphics ... horizon edge handling: when line touches top 
 */
 
@@ -203,7 +204,6 @@ void sensorTask(void *pvParameters) {
         gyro_pitch = 0.0;
         gyro_roll = 0.0;
 
-
         // Step C: Calibration done, resume normal operation
         currentAttitude.isCalibrating = false;
       }
@@ -229,7 +229,6 @@ void sensorTask(void *pvParameters) {
     // Gyro makes up 98% of new angle 
     gyro_roll = (alpha * gyro_roll) + ((1.0 - alpha) * accel_roll);
     gyro_pitch = (alpha * gyro_pitch) + ((1.0 - alpha) * accel_pitch);
-
 
     currentAttitude.roll = gyro_roll;
     currentAttitude.pitch = gyro_pitch;
@@ -321,7 +320,7 @@ void buttonTask(void *pvParameters) {
   for (;;) {
     // 1. Sleep until ISR sends semaphore
     if (xSemaphoreTake(buttonSemaphore, portMAX_DELAY) == pdTRUE) {
-      
+
       // 2. Wait 20ms to let the physical button spring stop bouncing (Debounce)
       vTaskDelay(pdMS_TO_TICKS(20));
 
@@ -336,14 +335,14 @@ void buttonTask(void *pvParameters) {
       else if (!isPressed && isTrackingPress) {
         // Button was just released
         isTrackingPress = false;
-        
+
         // Evaluate button press time
         if ((millis() - pressStartTime) >= 1000) {
           SystemCommand cmd = CMD_CALIBRATE;
           xQueueSend(commandQueue, &cmd, 0); 
         }
       }
-      
+
       // Clear out any extra semaphores that piled up during the 20ms bounce
       xQueueReset(buttonSemaphore); 
     }
