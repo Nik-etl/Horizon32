@@ -20,7 +20,7 @@ An artificial horizon flight display indicating pitch and roll using a MPU6050 I
 ## 3. FreeRTOS Architecture
 
 ### Task Diagram
-!Task Diagram(resources/task_diagram.png)
+!Task Diagram(docs/task_diagram.png)
 
 ### Tasks and Priorities
 The system utilizes the following FreeRTOS tasks:
