@@ -20,7 +20,7 @@ An artificial horizon flight display indicating pitch and roll using a MPU6050 I
 ## 3. FreeRTOS Architecture
 
 ### Task Diagram
-![Task Diagram](resources/task_diagram.png)
+![Task Diagram](docs/task_diagram.png)
 
 ### Tasks and Priorities
 The system utilizes the following FreeRTOS tasks:
@@ -29,16 +29,19 @@ The system utilizes the following FreeRTOS tasks:
    * **Responsibility:** Interacting with sensor and managing sensor values (Could be split into separate calibrate task)
    * **Priority:** 3
    * **Priority Justification:** Needs strict timing to read sensors without missing readings.
+   * **Deadline:** 100Hz, task needs to collect adequate amount of samples to allow for accurate sensor fusion
 
 2. **[DisplayTask]**
    * **Responsibility:** Draws display
    * **Priority:** 1 
    * **Priority Justification:** UI updates rely on data from other tasks
+   * **Deadline:** Task should be responsive to user input, but no strict deadline
 
 3. **[ButtonTask]**
    * **Responsibility:** Interacts with user input
    * **Priority:** 2 
    * **Priority Justification:** Sensor task should not be preempted because it could alter physics calculations. Display task should not preempt the button because it could cause the button to wait for draws which take much longer than sensor task runs.
+   * **Deadline:** greater than 20Hz, Should update at a smooth frame rate
 
 ### Communication & Synchronization
 * **Queues:** 
