@@ -34,7 +34,7 @@ The system utilizes the following FreeRTOS tasks:
 2. **DisplayTask**
    * **Responsibility:** Draws display
    * **Priority:** 1 
-   * **Priority Justification:** UI updates rely on data from other tasks
+   * **Priority Justification:** UI updates rely on data from other tasks, this should be preempted by more important tasks. Incorporated chunk writing to display to allow for writing in between preemption.
    * **Deadline:** Task should be responsive to user input, but no strict deadline
 
 3. **ButtonTask**
