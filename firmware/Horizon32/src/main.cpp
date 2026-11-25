@@ -110,6 +110,8 @@ void setup() {
   // 1. Init I2C Hardware
   Wire.begin(SDA_PIN, SCL_PIN); 
 
+    Serial.printf("PSRAM size: %u bytes\n", ESP.getPsramSize());
+
   if (!mpu.begin()) {
     Serial.println("MPU-6050 not found — run the I2C scanner first.");
     while (true) delay(1000);
