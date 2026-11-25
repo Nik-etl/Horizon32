@@ -20,7 +20,7 @@ An artificial horizon flight display indicating pitch and roll using a MPU6050 I
 ## 3. FreeRTOS Architecture
 
 ### Task Diagram
-!Task Diagram(resources/task_diagram.png)
+![Task Diagram](docs/task_diagram.png)
 
 ### Tasks and Priorities
 The system utilizes the following FreeRTOS tasks:
@@ -34,13 +34,13 @@ The system utilizes the following FreeRTOS tasks:
 2. **DisplayTask**
    * **Responsibility:** Draws display
    * **Priority:** 1 
-   * **Priority Justification:** UI updates rely on data from other tasks
+   * **Priority Justification:** UI updates rely on data from other tasks, this should be preempted by more important tasks. Incorporated chunk writing to display to allow for writing in between preemption.
    * **Deadline:** Task should be responsive to user input, but no strict deadline
 
 3. **ButtonTask**
    * **Responsibility:** Interacts with user input
    * **Priority:** 2 
-   * **Priority Justification:** Sensor task should not be preempted because it could alter physics calculations. Display task should not preempt the button because it could cause the button to wait for draws which take much longer than sensor task runs.
+   * **Priority Justification:** Sensor task should not be preempted because it could alter physics calculations. Display task should not preempt the button because it could cause the button to wait f[...]
    * **Deadline:** greater than 20Hz, Should update at a smooth frame rate
 
 ### Communication & Synchronization
@@ -53,11 +53,17 @@ The system utilizes the following FreeRTOS tasks:
 
 ## 4. Source Code and Compilation
 ### Repository Structure
-* `/src` - Contains the main `.cpp` and `.h` files.
-* `/docs` - Contains diagrams and presentation materials.
+* `/docs` - Contains the task diagram image used in this README.
+* `/firmware/Horizon32` - The PlatformIO firmware project for the ESP32-S3.
+  * `/src/main.cpp` - Implements the FreeRTOS tasks, sensor filtering, calibration, button handling, and OLED drawing.
+  * `/platformio.ini` - Defines the ESP32-S3 target and firmware dependencies.
+  * `/scripts` - Standalone Arduino sketches used for hardware, display, and RTOS experiments.
+  * `/include`, `/lib`, `/test` - Reserved directories for project headers, libraries, and tests; they currently contain PlatformIO placeholder README files.
+  * `/README.md` - Notes the implementation plan and measured display timing.
 
 ### How to Build and Flash
 1. Open the project in PlatformIO / Arduino IDE.
 2. Ensure the board is set to **ESP32-S3**.
 3. Install required libraries: Arduino, Adafruit MPU6050, Olikraus/U8g2.
 4. Compile and upload to the board.
+
